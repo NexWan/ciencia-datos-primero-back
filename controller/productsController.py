@@ -1,5 +1,5 @@
-from typing import List
-from fastapi import APIRouter, Depends, Form, File, UploadFile
+from typing import List, Dict
+from fastapi import APIRouter, Depends, Form, File, UploadFile, status, Response, HTTPException
 from sqlmodel import Session, select
 from db import get_session
 from models.product import Product
@@ -42,13 +42,14 @@ def get_products(session: Session = Depends(get_session)):
 
     session.close()
     return result
-    
+
 @router.get("/hello")
 def read_test():
     return {"test": "test"}
 
-@router.post("/products")
+@router.post("/products", status_code=status.HTTP_201_CREATED)
 def create_product(
+    response: Response,
     name: str = Form(...),
     description: str = Form(...),
     price: float = Form(...),
@@ -56,6 +57,22 @@ def create_product(
     id: int = Form(None),
     session: Session = Depends(get_session), 
     ):
+    try:
+        if not name:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": "Name is required"}
+        if not description:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": "Description is required"}
+        if not price:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": "Price is required"}
+        if not image:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": "Image is required"}
+    except:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": "All fields are required"}
     uniquename = f"{uuid.uuid4()}{os.path.splitext(image.filename)[1]}"
     file_location = f"{UPLOAD_FOLDER}/{uniquename}"
     with open(file_location, "wb") as file:
@@ -65,15 +82,25 @@ def create_product(
     session.commit()
     session.refresh(product)
     product.image = f"http://localhost:8000/images/{os.path.basename(product.image)}"
-    session.close()
-    tag = recognize_image(file_location)
-    session.add(ProductHasTag(product_id=product.id, tag_id=tag[0:1]))
+    
+    # Recognize the image and get the tag name
+    tag_name = recognize_image(file_location)
+    
+    # Query the Tag table to get the tag ID based on the tag name
+    tag = session.exec(select(Tag).where(Tag.name == tag_name)).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    
+    # Create a ProductHasTag entry
+    product_has_tag = ProductHasTag(product_id=product.id, tag_id=tag.id)
+    session.add(product_has_tag)
     session.commit()
-    session.close()
-    return {"id": product.id, "name": product.name, "description": product.description, "image": product.image, "price": product.price, "tags": list(tag[2:...])}
+    
+    return {"id": product.id, "name": product.name, "description": product.description, "image": product.image, "price": product.price, "tags": [tag.name]}
 
-@router.put("/products/{id}")
+@router.put("/products/{id}", status_code=status.HTTP_200_OK)
 def update_product(
+    response: Response,
     id: int,
     name: str = Form(None),
     description: str = Form(None),
@@ -81,18 +108,35 @@ def update_product(
     tag: str = Form(None),
     session: Session = Depends(get_session)
 ):
+    print(tag)
     product = session.exec(select(Product).where(Product.id == id)).first()
     if not product:
+        response.status_code = status.HTTP_404_NOT_FOUND
         return {"error": "Product not found"}
-    if name:
-        product.name = name
-    if description:
-        product.description = description
-    if price:
-        product.price = price
+    if not name:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": "Name is required"}
+    if not description:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": "Description is required"}
+    if not price:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": "Price is required"}
+    
+    product.name = name
+    product.description = description
+    product.price = price
     session.add(product)
     session.commit()
     session.refresh(product)
-    tag = 
-    session.close()
-    return {"id": product.id, "name": product.name, "description": product.description, "price": product.price}
+    
+    product_has_tag = session.exec(select(ProductHasTag).where(ProductHasTag.product_id == product.id)).first()
+    if not product_has_tag:
+        product_has_tag = ProductHasTag(product_id=product.id, tag_id=int(tag))
+    else:
+        product_has_tag.tag_id = int(tag)
+    
+    session.add(product_has_tag)
+    session.commit()
+
+    return {"id": product.id, "name": product.name, "description": product.description, "price": product.price, "tags": [tag]}
