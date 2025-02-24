@@ -7,3 +7,5 @@ __pycache__/
 *.jpeg
 *.gif
 env/
+*.h5
+labels.txt
