@@ -84,19 +84,14 @@ def create_product(
     product.image = f"http://localhost:8000/images/{os.path.basename(product.image)}"
     
     # Recognize the image and get the tag name
-    tag_name = recognize_image(file_location)
-    
-    # Query the Tag table to get the tag ID based on the tag name
-    tag = session.exec(select(Tag).where(Tag.name == tag_name)).first()
-    if not tag:
-        raise HTTPException(status_code=404, detail="Tag not found")
+    tag = recognize_image(file_location)
     
     # Create a ProductHasTag entry
-    product_has_tag = ProductHasTag(product_id=product.id, tag_id=tag.id)
+    product_has_tag = ProductHasTag(product_id=product.id, tag_id=tag[0:1])
     session.add(product_has_tag)
     session.commit()
     
-    return {"id": product.id, "name": product.name, "description": product.description, "image": product.image, "price": product.price, "tags": [tag.name]}
+    return {"id": product.id, "name": product.name, "description": product.description, "image": product.image, "price": product.price, "tags": [tag[2:]]}
 
 @router.put("/products/{id}", status_code=status.HTTP_200_OK)
 def update_product(
@@ -139,4 +134,20 @@ def update_product(
     session.add(product_has_tag)
     session.commit()
 
-    return {"id": product.id, "name": product.name, "description": product.description, "price": product.price, "tags": [tag]}
+    tag_name = session.exec(select(Tag).where(Tag.id == int(tag))).first()
+
+    return {"id": product.id, "name": product.name, "description": product.description, "price": product.price, "tags": [tag_name.name]}
+
+@router.delete("/products/{id}", status_code=status.HTTP_200_OK)
+def delete_product(
+    response: Response,
+    id: int,
+    session: Session = Depends(get_session)
+):
+    product = session.exec(select(Product).where(Product.id == id)).first()
+    if not product:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": "Product not found"}
+    session.delete(product)
+    session.commit()
+    return {"message": "Product deleted successfully"}
